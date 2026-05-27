@@ -55,9 +55,27 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', message: 'CasalFinan API', timestamp: new Date() });
+// Health check — also surfaces DB config status
+app.get('/api/health', async (_req, res) => {
+  const dbConfigured = !!process.env.DATABASE_URL;
+  if (!dbConfigured) {
+    return res.status(503).json({
+      status: 'error',
+      message: 'DATABASE_URL not configured',
+      fix: 'Add DATABASE_URL to Vercel environment variables',
+    });
+  }
+  try {
+    // Quick DB ping
+    const { PrismaClient } = await import('@prisma/client');
+    const p = new PrismaClient();
+    await p.$queryRaw`SELECT 1`;
+    await p.$disconnect();
+    return res.json({ status: 'ok', message: 'CasalFinan API', db: 'connected', timestamp: new Date() });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return res.status(503).json({ status: 'error', message: 'DB connection failed', detail: msg });
+  }
 });
 
 // Routes — all prefixed with /api

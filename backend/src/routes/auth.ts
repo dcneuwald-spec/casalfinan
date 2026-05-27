@@ -52,6 +52,13 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
       res.status(400).json({ error: error.errors[0].message });
       return;
     }
+    const msg = error instanceof Error ? error.message : String(error);
+    // Surface DB connection issues clearly
+    if (!process.env.DATABASE_URL || msg.includes('connect') || msg.includes('ECONNREFUSED') || msg.includes('P1001') || msg.includes('P1003')) {
+      res.status(503).json({ error: 'Banco de dados não configurado. Adicione DATABASE_URL nas variáveis do Vercel.' });
+      return;
+    }
+    console.error('[register]', msg);
     res.status(500).json({ error: 'Erro ao criar conta' });
   }
 });

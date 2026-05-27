@@ -1,17 +1,12 @@
 {
   "version": 2,
-  "buildCommand": "cd frontend && npm install --legacy-peer-deps && npm run build",
+  "buildCommand": "cd backend && npm install --legacy-peer-deps && npx prisma generate && cd ../frontend && npm install --legacy-peer-deps && npm run build",
   "outputDirectory": "frontend/dist",
-  "installCommand": "cd backend && npm install --legacy-peer-deps && npx prisma generate",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ],
-  "env": {
-    "NODE_ENV": "production"
-  },
   "functions": {
-    "api/index.ts": {
+    "api/[...path].ts": {
       "maxDuration": 30
     }
   }

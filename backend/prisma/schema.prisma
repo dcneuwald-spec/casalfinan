@@ -3,11 +3,9 @@ generator client {
 }
 
 datasource db {
-  // Use DATABASE_URL env var
-  // For local dev: "file:./dev.db" (SQLite)
-  // For production: postgresql://... (Neon, Supabase, etc.)
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")          // pooled (PgBouncer) — for runtime queries
+  directUrl = env("DATABASE_URL_UNPOOLED") // direct — required for prisma migrate deploy
 }
 
 model User {

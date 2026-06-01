@@ -62,6 +62,13 @@
   .kpi-card.receita .value { color: var(--yellow); }
   .kpi-card.ticket .value { color: #06b6d4; }
   .kpi-card.conversao .value { color: #ec4899; }
+  .kpi-yoy { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .kpi-yoy .yoy-label { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px; }
+  .kpi-yoy .yoy-value { font-size: 1.1rem; font-weight: 600; color: var(--muted); }
+  .kpi-yoy .yoy-delta { font-size: 0.7rem; font-weight: 600; margin-top: 2px; }
+  .yoy-delta.up { color: var(--green); }
+  .yoy-delta.down { color: var(--red); }
+  .yoy-delta.neutral { color: var(--muted); }
 
   /* CHARTS GRID */
   .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
@@ -143,35 +150,70 @@
     <div class="kpi-card total">
       <div class="label">Total de Negócios</div>
       <div class="value" id="kpi_total">–</div>
+      <div class="kpi-yoy">
+        <div class="yoy-label" id="kpi_yoy_label">Mesmo período ano ant.</div>
+        <div class="yoy-value" id="kpi_py_total">–</div>
+        <div class="yoy-delta" id="kpi_delta_total">–</div>
+      </div>
     </div>
     <div class="kpi-card ganho">
       <div class="label">Ganhos</div>
       <div class="value" id="kpi_ganho">–</div>
       <div class="sub" id="kpi_ganho_pct">–</div>
+      <div class="kpi-yoy">
+        <div class="yoy-label">Ano anterior</div>
+        <div class="yoy-value" id="kpi_py_ganho">–</div>
+        <div class="yoy-delta" id="kpi_delta_ganho">–</div>
+      </div>
     </div>
     <div class="kpi-card perdido">
       <div class="label">Perdidos</div>
       <div class="value" id="kpi_perdido">–</div>
       <div class="sub" id="kpi_perdido_pct">–</div>
+      <div class="kpi-yoy">
+        <div class="yoy-label">Ano anterior</div>
+        <div class="yoy-value" id="kpi_py_perdido">–</div>
+        <div class="yoy-delta" id="kpi_delta_perdido">–</div>
+      </div>
     </div>
     <div class="kpi-card andamento">
       <div class="label">Em Andamento</div>
       <div class="value" id="kpi_andamento">–</div>
+      <div class="kpi-yoy">
+        <div class="yoy-label">Ano anterior</div>
+        <div class="yoy-value" id="kpi_py_andamento">–</div>
+        <div class="yoy-delta" id="kpi_delta_andamento">–</div>
+      </div>
     </div>
     <div class="kpi-card receita">
       <div class="label">Receita Total</div>
       <div class="value" id="kpi_receita">–</div>
       <div class="sub" id="kpi_receita_sub">negócios ganhos</div>
+      <div class="kpi-yoy">
+        <div class="yoy-label">Ano anterior</div>
+        <div class="yoy-value" id="kpi_py_receita">–</div>
+        <div class="yoy-delta" id="kpi_delta_receita">–</div>
+      </div>
     </div>
     <div class="kpi-card ticket">
       <div class="label">Ticket Médio</div>
       <div class="value" id="kpi_ticket">–</div>
       <div class="sub">negócios ganhos</div>
+      <div class="kpi-yoy">
+        <div class="yoy-label">Ano anterior</div>
+        <div class="yoy-value" id="kpi_py_ticket">–</div>
+        <div class="yoy-delta" id="kpi_delta_ticket">–</div>
+      </div>
     </div>
     <div class="kpi-card conversao">
       <div class="label">Taxa de Conversão</div>
       <div class="value" id="kpi_conversao">–</div>
       <div class="sub">ganhos / total fechado</div>
+      <div class="kpi-yoy">
+        <div class="yoy-label">Ano anterior</div>
+        <div class="yoy-value" id="kpi_py_conversao">–</div>
+        <div class="yoy-delta" id="kpi_delta_conversao">–</div>
+      </div>
     </div>
   </div>
 
@@ -340,19 +382,88 @@ function updateAll() {
   renderTable();
 }
 
+function shiftYear(dateStr, delta) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  d.setFullYear(d.getFullYear() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+function setDelta(elId, current, prev, isMoney=false, isLess=false) {
+  const el = document.getElementById(elId);
+  if (prev === null || prev === undefined) { el.textContent = ''; return; }
+  const diff = current - prev;
+  const pct = prev !== 0 ? (diff / prev * 100) : null;
+  const arrow = diff > 0 ? '▲' : diff < 0 ? '▼' : '–';
+  // for "perdidos" e "conversão inversa", down is good; controle via isLess
+  const isGood = isLess ? diff < 0 : diff > 0;
+  const cls = diff === 0 ? 'neutral' : isGood ? 'up' : 'down';
+  const diffFmt = isMoney ? fmtBRL(Math.abs(diff)) : Math.abs(diff).toLocaleString('pt-BR', {maximumFractionDigits:1});
+  const pctStr = pct !== null ? ' (' + (diff>=0?'+':'') + pct.toFixed(1) + '%)' : '';
+  el.textContent = arrow + ' ' + diffFmt + pctStr;
+  el.className = 'yoy-delta ' + cls;
+}
+
 function updateKPIs() {
-  // Iniciados: usa data_inicio (igual ao CRM)
-  const total = filtered.length;
+  const df = document.getElementById('f_date_from').value;
+  const dt = document.getElementById('f_date_to').value;
+  const st = document.getElementById('f_status').value;
+  const re = document.getElementById('f_responsavel').value;
+  const or = document.getElementById('f_origem').value;
+  const pr = document.getElementById('f_produto').value;
+  const fu = document.getElementById('f_funil').value;
+
+  // Período do ano anterior
+  const pyFrom = shiftYear(df, -1);
+  const pyTo   = shiftYear(dt, -1);
+  const hasDates = df || dt;
+
+  const extraMatch = r => {
+    if (st && r.status !== st) return false;
+    if (re && r.responsavel !== re) return false;
+    if (or && r.origem !== or) return false;
+    if (pr && r.produto !== pr) return false;
+    if (fu && r.funil !== fu) return false;
+    return true;
+  };
+
+  // Ano anterior — iniciados
+  const pyFiltered = hasDates ? RAW_DATA.filter(r => {
+    if (pyFrom && r.data_inicio < pyFrom) return false;
+    if (pyTo   && r.data_inicio > pyTo)   return false;
+    return extraMatch(r);
+  }) : [];
+
+  // Ano anterior — fechados (data_conclusao)
+  const pyFilteredClosed = hasDates ? RAW_DATA.filter(r => {
+    if (r.status === 'Em andamento') return false;
+    const dc = r.data_conclusao;
+    if (pyFrom && (!dc || dc < pyFrom)) return false;
+    if (pyTo   && (!dc || dc > pyTo))   return false;
+    return extraMatch(r);
+  }) : [];
+
+  // --- Período atual ---
+  const total    = filtered.length;
   const andamento = filtered.filter(r => r.status === 'Em andamento').length;
-
-  // Ganhos/Perdidos: usa data_conclusao (igual ao CRM)
-  const ganho = filteredClosed.filter(r => r.status === 'Ganho').length;
-  const perdido = filteredClosed.filter(r => r.status === 'Perdido').length;
+  const ganho    = filteredClosed.filter(r => r.status === 'Ganho').length;
+  const perdido  = filteredClosed.filter(r => r.status === 'Perdido').length;
   const receitaGanho = filteredClosed.filter(r => r.status === 'Ganho').reduce((s, r) => s + r.valor, 0);
-  const ticket = ganho > 0 ? receitaGanho / ganho : 0;
+  const ticket   = ganho > 0 ? receitaGanho / ganho : 0;
   const fechados = ganho + perdido;
-  const conv = fechados > 0 ? ganho / fechados * 100 : 0;
+  const conv     = fechados > 0 ? ganho / fechados * 100 : 0;
 
+  // --- Ano anterior ---
+  const pyTotal    = pyFiltered.length;
+  const pyAndamento = pyFiltered.filter(r => r.status === 'Em andamento').length;
+  const pyGanho    = pyFilteredClosed.filter(r => r.status === 'Ganho').length;
+  const pyPerdido  = pyFilteredClosed.filter(r => r.status === 'Perdido').length;
+  const pyReceita  = pyFilteredClosed.filter(r => r.status === 'Ganho').reduce((s, r) => s + r.valor, 0);
+  const pyTicket   = pyGanho > 0 ? pyReceita / pyGanho : 0;
+  const pyFechados = pyGanho + pyPerdido;
+  const pyConv     = pyFechados > 0 ? pyGanho / pyFechados * 100 : 0;
+
+  // Render atual
   document.getElementById('kpi_total').textContent = total.toLocaleString('pt-BR');
   document.getElementById('kpi_ganho').textContent = ganho.toLocaleString('pt-BR');
   document.getElementById('kpi_ganho_pct').textContent = fmtPct(ganho, total) + ' do total iniciados';
@@ -362,6 +473,35 @@ function updateKPIs() {
   document.getElementById('kpi_receita').textContent = fmtBRL(receitaGanho);
   document.getElementById('kpi_ticket').textContent = fmtBRL(ticket);
   document.getElementById('kpi_conversao').textContent = conv.toFixed(1) + '%';
+
+  // Render ano anterior + deltas
+  if (hasDates) {
+    const pyLabel = (pyFrom || '') + (pyFrom && pyTo ? ' – ' : '') + (pyTo || '');
+    document.getElementById('kpi_yoy_label').textContent = 'Mesmo período ' + (pyFrom ? pyFrom.slice(0,4) : 'ano ant.');
+    document.getElementById('kpi_py_total').textContent    = pyTotal.toLocaleString('pt-BR');
+    document.getElementById('kpi_py_ganho').textContent    = pyGanho.toLocaleString('pt-BR');
+    document.getElementById('kpi_py_perdido').textContent  = pyPerdido.toLocaleString('pt-BR');
+    document.getElementById('kpi_py_andamento').textContent = pyAndamento.toLocaleString('pt-BR');
+    document.getElementById('kpi_py_receita').textContent  = fmtBRL(pyReceita);
+    document.getElementById('kpi_py_ticket').textContent   = fmtBRL(pyTicket);
+    document.getElementById('kpi_py_conversao').textContent = pyConv.toFixed(1) + '%';
+    setDelta('kpi_delta_total',    total,    pyTotal);
+    setDelta('kpi_delta_ganho',    ganho,    pyGanho);
+    setDelta('kpi_delta_perdido',  perdido,  pyPerdido,  false, true);
+    setDelta('kpi_delta_andamento',andamento,pyAndamento);
+    setDelta('kpi_delta_receita',  receitaGanho, pyReceita, true);
+    setDelta('kpi_delta_ticket',   ticket,   pyTicket,   true);
+    setDelta('kpi_delta_conversao',conv,     pyConv,     false);
+  } else {
+    // Sem filtro de data: esconde comparativo
+    ['total','ganho','perdido','andamento','receita','ticket','conversao'].forEach(k => {
+      const pv = document.getElementById('kpi_py_' + k);
+      const dv = document.getElementById('kpi_delta_' + k);
+      if (pv) pv.textContent = 'Defina um período';
+      if (dv) { dv.textContent = ''; dv.className = 'yoy-delta neutral'; }
+    });
+    document.getElementById('kpi_yoy_label').textContent = 'Mesmo período ano ant.';
+  }
 }
 
 function count(arr, key) {

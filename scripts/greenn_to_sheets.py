@@ -40,16 +40,27 @@ CREDENTIALS_FILE = Path(__file__).parent / "google_credentials.json"
 
 
 async def login(page, email: str, password: str):
-    print("🔐 Fazendo login...")
+    print("🔐 Abrindo página de login...")
+    print("   ⏳ O browser vai abrir. Se a página de login aparecer, faça login MANUALMENTE.")
+    print("   ✋ Depois de logar, volte aqui e pressione Enter para continuar.")
     await page.goto("https://app.greenn.club/login", wait_until="networkidle")
 
-    # Tenta os seletores mais comuns de login
-    await page.fill('input[type="email"], input[name="email"], input[placeholder*="mail" i]', email)
-    await page.fill('input[type="password"], input[name="password"]', password)
-    await page.click('button[type="submit"], button:has-text("Entrar"), button:has-text("Login")')
+    # Verifica se os campos existem para tentar preenchimento automático
+    email_field = await page.query_selector('input[type="email"], input[name="email"]')
+    if email_field:
+        print("🤖 Tentando login automático...")
+        await page.fill('input[type="email"], input[name="email"]', email)
+        await page.fill('input[type="password"], input[name="password"]', password)
+        await page.click('button[type="submit"], button:has-text("Entrar"), button:has-text("Login")')
+        try:
+            await page.wait_for_url(re.compile(r"greenn\.club/(?!login)"), timeout=10000)
+            print("✅ Login automático realizado")
+            return
+        except Exception:
+            print("⚠️  Login automático falhou. Faça login manualmente no browser.")
 
-    await page.wait_for_url(re.compile(r"greenn\.club/(?!login)"), timeout=15000)
-    print("✅ Login realizado")
+    input("\n👉 Faça login manualmente no browser e depois pressione Enter aqui para continuar...")
+    print("✅ Continuando...")
 
 
 async def get_all_members(page) -> list[dict]:

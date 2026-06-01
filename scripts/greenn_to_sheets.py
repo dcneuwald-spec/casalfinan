@@ -200,23 +200,35 @@ async def main():
         print("   Siga as instruções no topo do script para criar o google_credentials.json")
         sys.exit(1)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)  # headless=True para rodar sem janela
-        context = await browser.new_context()
-        page    = await context.new_page()
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=False)
+            context = await browser.new_context()
+            page    = await context.new_page()
 
-        try:
-            await login(page, email, password)
-            members = await get_all_members(page)
-        finally:
-            await browser.close()
+            try:
+                await login(page, email, password)
+                members = await get_all_members(page)
+            finally:
+                await browser.close()
 
-    if not members:
-        print("⚠️  Nenhum membro encontrado. Verifique os seletores no script.")
-        sys.exit(1)
+        if not members:
+            print("⚠️  Nenhum membro encontrado. Verifique os seletores no script.")
+            input("\nPressione Enter para fechar...")
+            sys.exit(1)
 
-    print(f"\n📦 Total encontrado: {len(members)} membros")
-    save_to_sheets(members)
+        print(f"\n📦 Total encontrado: {len(members)} membros")
+        save_to_sheets(members)
+        print("\n✅ Concluído!")
+
+    except Exception as e:
+        import traceback
+        print("\n" + "="*60)
+        print("❌ ERRO:")
+        traceback.print_exc()
+        print("="*60)
+
+    input("\nPressione Enter para fechar...")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,12 @@
+{
+  "valor": 5000.00,
+  "descricao_servico": "Prestação de serviços de consultoria referente ao mês de {MES_ANO}",
+  "codigo_servico": "170601",
+  "clientes": [
+    {
+      "nome": "J.L.S Vasconcellos Empreendedorismo Eirelli",
+      "cnpj": "40.803.022/0001-04",
+      "email": "financeiro@jvgestaodenegocios.com"
+    }
+  ]
+}

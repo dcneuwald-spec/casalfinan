@@ -1,0 +1,12 @@
+{
+  "valor": 6000.00,
+  "descricao_servico": "Prestação de serviços de consultoria referente ao mês de {MESANTERIOR_ANO}",
+  "codigo_servico": "170601",
+  "clientes": [
+    {
+      "nome": "DUTRA & ARRUE CONSULTORIA EMPRESARIAL LTDA",
+      "cnpj": "08.202.380/0001-59",
+      "email": "contasapagar@dutracorporativo.srv.br"
+    }
+  ]
+}

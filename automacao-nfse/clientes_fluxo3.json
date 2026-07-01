@@ -1,0 +1,12 @@
+{
+  "valor": 1000.00,
+  "descricao_servico": "Complemento variável referente ao mês de {MESANTERIOR_ANO}",
+  "codigo_servico": "170601",
+  "clientes": [
+    {
+      "nome": "DUTRA & ARRUE CONSULTORIA EMPRESARIAL LTDA",
+      "cnpj": "08.202.380/0001-59",
+      "email": "contasapagar@dutracorporativo.srv.br"
+    }
+  ]
+}

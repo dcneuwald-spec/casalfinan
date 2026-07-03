@@ -118,21 +118,68 @@ async function login(page) {
     } catch {}
   }
 
-  // Aguardar campo de usuário
-  console.log('[LOGIN] Aguardando campo de usuário (até 90s)...');
-  try {
-    await page.waitForSelector('input[name="username"]', { timeout: 90000 });
-  } catch {
+  // Aguardar campo de usuário — tenta vários seletores
+  console.log('[LOGIN] Aguardando campo de usuário (até 60s)...');
+  const seletoresInput = [
+    'input[name="username"]',
+    'input[aria-label*="usuário"]',
+    'input[aria-label*="username"]',
+    'input[aria-label*="celular"]',
+    'input[autocomplete="username"]',
+    'input[type="text"]',
+  ];
+
+  let inputUsuario = null;
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    for (const sel of seletoresInput) {
+      try {
+        const el = page.locator(sel).first();
+        if (await el.count() > 0 && await el.isVisible()) {
+          inputUsuario = sel;
+          break;
+        }
+      } catch {}
+    }
+    if (inputUsuario) break;
+    // Logar todos inputs encontrados para debug
+    try {
+      const inputs = await page.$$eval('input', els =>
+        els.map(e => ({ type: e.type, name: e.name, placeholder: e.placeholder, ariaLabel: e.getAttribute('aria-label') }))
+      );
+      if (inputs.length > 0) {
+        console.log('  [DEBUG] Inputs encontrados:', JSON.stringify(inputs));
+      }
+    } catch {}
+    await sleep(3000);
+  }
+
+  if (!inputUsuario) {
     await screenshot(page, '04_erro_sem_campo');
     console.error('[ERRO] Campo de usuário não encontrado. Veja debug_04_erro_sem_campo.png em C:\\scraper\\');
     process.exit(1);
   }
 
-  await page.locator('input[name="username"]').click();
-  await page.locator('input[name="username"]').fill(INSTAGRAM_USER);
+  console.log(`[LOGIN] Campo encontrado: ${inputUsuario}`);
+  await page.locator(inputUsuario).click();
+  await page.locator(inputUsuario).fill(INSTAGRAM_USER);
   await sleep(600);
-  await page.locator('input[name="password"]').click();
-  await page.locator('input[name="password"]').fill(INSTAGRAM_PASS);
+
+  // Campo senha: próximo input após o usuário
+  const seletoresSenha = [
+    'input[name="password"]',
+    'input[type="password"]',
+    'input[aria-label*="senha"]',
+    'input[aria-label*="password"]',
+  ];
+  let inputSenha = 'input[type="password"]';
+  for (const sel of seletoresSenha) {
+    try {
+      if (await page.locator(sel).count() > 0) { inputSenha = sel; break; }
+    } catch {}
+  }
+  await page.locator(inputSenha).click();
+  await page.locator(inputSenha).fill(INSTAGRAM_PASS);
   await sleep(600);
   await screenshot(page, '05_antes_submit');
 
@@ -281,24 +328,19 @@ async function scrapePerfil(page, username) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 (async () => {
-  // Tenta usar Chrome real; se não encontrar, usa Chromium do Playwright
-  let browser;
-  try {
-    browser = await chromium.launch({
-      channel: 'chrome',      // usa o Google Chrome instalado no Windows
-      headless: false,
-      slowMo: 60,
-      args: ['--start-maximized', '--disable-blink-features=AutomationControlled'],
-    });
-    console.log('[BROWSER] Usando Google Chrome instalado');
-  } catch {
-    browser = await chromium.launch({
-      headless: false,
-      slowMo: 60,
-      args: ['--start-maximized', '--disable-blink-features=AutomationControlled'],
-    });
-    console.log('[BROWSER] Chrome não encontrado, usando Chromium do Playwright');
-  }
+  // Usa Chromium do Playwright com perfil completamente limpo
+  // (evita cookies/sessão do Facebook que causavam redirecionamento)
+  const browser = await chromium.launch({
+    headless: false,
+    slowMo: 80,
+    args: [
+      '--start-maximized',
+      '--disable-blink-features=AutomationControlled',
+      '--no-first-run',
+      '--no-default-browser-check',
+    ],
+  });
+  console.log('[BROWSER] Iniciando com perfil limpo (sem cookies anteriores)');
 
   const context = await browser.newContext({
     userAgent:
@@ -316,6 +358,7 @@ async function scrapePerfil(page, username) {
   // Ocultar sinais de automação
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    window.chrome = { runtime: {} };
   });
 
   await login(page);

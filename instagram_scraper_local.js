@@ -64,124 +64,64 @@ async function snap(page, nome) {
   } catch {}
 }
 
-// ─── LOGIN ────────────────────────────────────────────────────────────────────
+// ─── LOGIN MANUAL ─────────────────────────────────────────────────────────────
+// O Instagram detecta e bloqueia login automatizado (redireciona ao Facebook).
+// Solução: VOCÊ faz o login na janela que abrir. O script espera você entrar
+// e só então começa o scraping. A sessão fica salva para as próximas execuções.
 async function login(page) {
-  console.log('\n[LOGIN] Abrindo página de login do Instagram...');
+  console.log('\n╔══════════════════════════════════════════════════════════╗');
+  console.log('║  LOGIN MANUAL NECESSÁRIO                                  ║');
+  console.log('║                                                          ║');
+  console.log('║  Uma janela do navegador foi aberta.                     ║');
+  console.log('║  1. Faça login normalmente com:                          ║');
+  console.log(`║       usuário: ${INSTAGRAM_USER.padEnd(42)}║`);
+  console.log(`║       senha:   ${INSTAGRAM_PASS.padEnd(42)}║`);
+  console.log('║  2. Resolva qualquer captcha/verificação se aparecer     ║');
+  console.log('║  3. Quando estiver logado (vendo o feed), o script       ║');
+  console.log('║     detecta automaticamente e começa o scraping.         ║');
+  console.log('╚══════════════════════════════════════════════════════════╝\n');
 
-  // Vai direto para a tela de login — sem passar pela home
   await page.goto('https://www.instagram.com/accounts/login/', {
     waitUntil: 'domcontentloaded',
     timeout: 60000,
   });
-  await sleep(4000);
-  await snap(page, '01_login');
 
-  // Garantir que estamos no Instagram (não Facebook)
-  const url = page.url();
-  console.log(`[LOGIN] URL atual: ${url}`);
-  if (!url.includes('instagram.com')) {
-    console.error('[ERRO] Redirecionado para fora do Instagram. URL:', url);
-    await snap(page, 'ERRO_url');
-    process.exit(1);
-  }
+  // Espera até que o login seja concluído (detecta pela ausência do formulário
+  // de login e presença de elementos do feed). Até 5 minutos.
+  console.log('[LOGIN] Aguardando você concluir o login (até 5 min)...');
+  const deadline = Date.now() + 5 * 60 * 1000;
 
-  // Fechar qualquer popup/cookie sem clicar em nada que leve ao Facebook
-  // Só aceita se o botão NÃO contiver "Facebook"
-  for (const txt of ['Aceitar tudo', 'Allow all cookies', 'Aceitar cookies essenciais']) {
+  while (Date.now() < deadline) {
+    await sleep(3000);
     try {
-      const btn = page.getByRole('button', { name: new RegExp(txt, 'i') });
-      if (await btn.count() > 0) {
-        await btn.first().click();
-        console.log(`[LOGIN] Cookie: "${txt}" aceito`);
-        await sleep(2000);
-        break;
+      const url = page.url();
+      // Ainda na tela de login/challenge?
+      const temFormLogin = await page.locator('input[type="password"]').count() > 0;
+      const naHomeLogada =
+        !temFormLogin &&
+        url.includes('instagram.com') &&
+        !url.includes('/accounts/login') &&
+        !url.includes('/challenge') &&
+        !url.includes('facebook.com');
+
+      // Confirma sessão logada procurando ícones do feed (perfil, explorar)
+      if (naHomeLogada) {
+        const logado =
+          (await page.locator('svg[aria-label*="Início"]').count() > 0) ||
+          (await page.locator('svg[aria-label*="Home"]').count() > 0) ||
+          (await page.locator('a[href="/direct/inbox/"]').count() > 0) ||
+          (await page.locator('a[href*="/explore/"]').count() > 0);
+        if (logado) {
+          console.log('[LOGIN] ✔ Login detectado! Iniciando scraping...\n');
+          await sleep(2000);
+          return;
+        }
       }
     } catch {}
   }
 
-  // Localizar campo de usuário pelo placeholder (o que aparece nas screenshots)
-  console.log('[LOGIN] Procurando campo de usuário...');
-  let campoUsuario = null;
-
-  // Tenta por placeholder (mais confiável para o Instagram atual)
-  for (const ph of [
-    'Número de celular, nome de usuário ou email',
-    'Phone number, username, or email',
-    'usuário',
-    'username',
-  ]) {
-    try {
-      const loc = page.locator(`input[placeholder*="${ph}"]`);
-      if (await loc.count() > 0) {
-        campoUsuario = loc.first();
-        console.log(`[LOGIN] Campo encontrado pelo placeholder: "${ph}"`);
-        break;
-      }
-    } catch {}
-  }
-
-  // Fallback: primeiro input de texto visível (que não seja senha)
-  if (!campoUsuario) {
-    try {
-      const inputs = page.locator('input[type="text"], input:not([type="password"]):not([type="submit"])');
-      if (await inputs.count() > 0) {
-        campoUsuario = inputs.first();
-        console.log('[LOGIN] Campo encontrado via fallback (primeiro input de texto)');
-      }
-    } catch {}
-  }
-
-  if (!campoUsuario) {
-    await snap(page, 'ERRO_sem_campo');
-    // Logar todos os inputs para diagnóstico
-    try {
-      const todos = await page.$$eval('input', els => els.map(e => ({
-        type: e.type, name: e.name, placeholder: e.placeholder,
-        id: e.id, className: e.className.substring(0, 40),
-      })));
-      console.log('[DEBUG] Inputs na página:', JSON.stringify(todos, null, 2));
-    } catch {}
-    console.error('[ERRO] Campo de usuário não encontrado. Veja debug_ERRO_sem_campo.png');
-    process.exit(1);
-  }
-
-  // Preencher usuário
-  await campoUsuario.click();
-  await campoUsuario.fill('');
-  await sleep(200);
-  await campoUsuario.type(INSTAGRAM_USER, { delay: 80 });
-  await sleep(500);
-
-  // Campo senha — pelo tipo password
-  const campoSenha = page.locator('input[type="password"]').first();
-  await campoSenha.click();
-  await campoSenha.fill('');
-  await sleep(200);
-  await campoSenha.type(INSTAGRAM_PASS, { delay: 80 });
-  await sleep(500);
-
-  await snap(page, '02_preenchido');
-
-  // Clicar em Entrar (excluindo o botão "Entrar com o Facebook")
-  const btnEntrar = page.locator('button[type="submit"]').first();
-  await btnEntrar.click();
-  console.log('[LOGIN] Credenciais enviadas...');
-  await sleep(8000);
-
-  await snap(page, '03_pos_login');
-  console.log(`[LOGIN] URL pós-login: ${page.url()}`);
-
-  // Fechar popups pós-login
-  for (let i = 0; i < 3; i++) {
-    for (const txt of ['Agora não', 'Not Now', 'Cancelar', 'Skip', 'Não agora']) {
-      try {
-        const b = page.getByRole('button', { name: new RegExp(txt, 'i') });
-        if (await b.count() > 0) { await b.first().click(); await sleep(1500); }
-      } catch {}
-    }
-  }
-
-  console.log('[LOGIN] Concluído\n');
+  console.error('[ERRO] Tempo esgotado esperando login manual (5 min).');
+  process.exit(1);
 }
 
 // ─── EXTRAIR TEXTO DO POST ────────────────────────────────────────────────────
@@ -305,25 +245,27 @@ async function scrapePerfil(page, username) {
 }
 
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
+const SESSION_FILE = 'C:\\scraper\\ig_session.json';
+
 (async () => {
-  const browser = await chromium.launch({
+  // Usa perfil persistente: guarda a sessão logada numa pasta para
+  // não precisar logar de novo nas próximas execuções.
+  const USER_DATA_DIR = 'C:\\scraper\\chrome_profile';
+
+  const ctx = await chromium.launchPersistentContext(USER_DATA_DIR, {
     headless: false,
-    slowMo: 80,
+    slowMo: 60,
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    viewport: { width: 1280, height: 900 },
+    locale: 'pt-BR',
     args: [
-      '--start-maximized',
       '--disable-blink-features=AutomationControlled',
       '--no-first-run',
       '--no-default-browser-check',
     ],
   });
 
-  const ctx = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 900 },
-    locale: 'pt-BR',
-  });
-
-  const page = await ctx.newPage();
+  const page = ctx.pages()[0] || await ctx.newPage();
 
   // Esconder flag de automação
   await page.addInitScript(() => {
@@ -331,7 +273,19 @@ async function scrapePerfil(page, username) {
     window.chrome = { runtime: {} };
   });
 
-  await login(page);
+  // Verifica se já está logado (sessão salva de execução anterior)
+  await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await sleep(4000);
+  const jaLogado =
+    (await page.locator('a[href="/direct/inbox/"]').count() > 0) ||
+    (await page.locator('a[href*="/explore/"]').count() > 0) ||
+    (await page.locator('svg[aria-label*="Início"]').count() > 0);
+
+  if (jaLogado) {
+    console.log('[SESSÃO] Já logado de execução anterior — pulando login\n');
+  } else {
+    await login(page);
+  }
 
   const todos = [];
   for (const p of PERFIS) {
@@ -339,7 +293,7 @@ async function scrapePerfil(page, username) {
     await sleep(3000);
   }
 
-  await browser.close();
+  await ctx.close();
 
   const csv = [
     'Data da Publicação,@ do Perfil,Link da Postagem',

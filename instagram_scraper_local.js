@@ -64,6 +64,17 @@ async function snap(page, nome) {
   } catch {}
 }
 
+function salvarCSV(todos) {
+  const csv = [
+    'Data da Publicação,@ do Perfil,Link da Postagem,Curtidas,Comentários,Visualizações',
+    ...todos.map(r => [
+      escaparCSV(r.data), escaparCSV(r.perfil), escaparCSV(r.link),
+      escaparCSV(r.likes), escaparCSV(r.comentarios), escaparCSV(r.views),
+    ].join(','))
+  ].join('\n');
+  fs.writeFileSync('C:\\scraper\\resultados_instagram.csv', '﻿' + csv, 'utf-8');
+}
+
 // ─── LOGIN MANUAL ─────────────────────────────────────────────────────────────
 // O Instagram detecta e bloqueia login automatizado (redireciona ao Facebook).
 // Solução: VOCÊ faz o login na janela que abrir. O script espera você entrar
@@ -124,19 +135,85 @@ async function login(page) {
   process.exit(1);
 }
 
-// ─── EXTRAIR TEXTO DO POST ────────────────────────────────────────────────────
-async function extrairTexto(page) {
-  let txt = '';
-  for (const s of ['h1', 'article span', 'div[class*="Caption"] span']) {
+// Espera aleatória para parecer humano e evitar bloqueio por rate-limit
+function randSleep(min, max) {
+  return sleep(min + Math.random() * (max - min));
+}
+
+// Detecta se a página foi redirecionada para login (bloqueio/sessão expirada)
+function estaNaTelaDeLogin(page) {
+  const u = page.url();
+  return u.includes('/accounts/login') || u.includes('/challenge') || u.includes('facebook.com');
+}
+
+// Se bloqueado, pausa e espera você refazer o login manualmente na janela
+async function garantirLogado(page) {
+  if (!estaNaTelaDeLogin(page)) return true;
+
+  console.log('\n╔══════════════════════════════════════════════════════════╗');
+  console.log('║  INSTAGRAM PEDIU LOGIN NOVAMENTE                          ║');
+  console.log('║  Faça o login na janela do navegador.                    ║');
+  console.log('║  O script retoma sozinho assim que você entrar.          ║');
+  console.log('╚══════════════════════════════════════════════════════════╝\n');
+
+  const deadline = Date.now() + 5 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await sleep(3000);
+    if (!estaNaTelaDeLogin(page) &&
+        (await page.locator('input[type="password"]').count()) === 0) {
+      console.log('[LOGIN] ✔ Retomando scraping...\n');
+      await sleep(2000);
+      return true;
+    }
+  }
+  console.error('[ERRO] Tempo esgotado esperando re-login.');
+  return false;
+}
+
+// ─── EXTRAIR DADOS DO POST (texto + métricas) ─────────────────────────────────
+// Usa a meta og:description que traz "X likes, Y comments - Autor: legenda"
+async function extrairDados(page) {
+  let ogDesc = '';
+  try {
+    ogDesc = await page.$eval('meta[property="og:description"]', el => el.content || '');
+  } catch {}
+
+  // Texto para busca de keywords: og:description + legenda visível + alts
+  let texto = ogDesc;
+  for (const s of ['h1', 'article h1', 'div[class*="Caption"] span']) {
     try {
       const els = await page.$$(s);
-      for (const el of els) txt += ' ' + (await el.textContent().catch(() => ''));
+      for (const el of els) texto += ' ' + (await el.textContent().catch(() => ''));
     } catch {}
   }
   try {
-    txt += ' ' + (await page.$$eval('img[alt]', imgs => imgs.map(i => i.alt))).join(' ');
+    texto += ' ' + (await page.$$eval('img[alt]', imgs => imgs.map(i => i.alt))).join(' ');
   } catch {}
-  return txt;
+
+  // Likes e comentários do og:description (funciona em pt e en)
+  let likes = '', comentarios = '';
+  const mLikes = ogDesc.match(/([\d.,]+)\s*(likes|curtidas)/i);
+  if (mLikes) likes = mLikes[1];
+  const mCom = ogDesc.match(/([\d.,]+)\s*(comments|comentários|comentarios)/i);
+  if (mCom) comentarios = mCom[1];
+
+  // Visualizações (vídeos/reels): procura no texto da página
+  let views = '';
+  try {
+    const corpo = await page.evaluate(() => document.body.innerText);
+    const mViews = corpo.match(/([\d.,]+)\s*(visualizações|reproduções|views|plays)/i);
+    if (mViews) views = mViews[1];
+  } catch {}
+
+  // Fallback: contar comentários visíveis se og não trouxe
+  if (!comentarios) {
+    try {
+      const n = await page.locator('ul ul').count();
+      if (n > 0) comentarios = String(n) + '+';
+    } catch {}
+  }
+
+  return { texto, likes, comentarios, views };
 }
 
 // ─── OBTER DATA DO POST ───────────────────────────────────────────────────────
@@ -165,13 +242,10 @@ async function scrapePerfil(page, username) {
     await page.goto(`https://www.instagram.com/${username}/`, {
       waitUntil: 'domcontentloaded', timeout: 40000,
     });
-    await sleep(3000);
+    await randSleep(4000, 6000);
 
-    // Redirigido para login = sessão expirou
-    if (page.url().includes('/accounts/login')) {
-      console.log('  ! Sessão expirada — encerrando');
-      return found;
-    }
+    if (!await garantirLogado(page)) return found;
+
     if (await page.$('text=Esta página não está disponível') ||
         await page.$('text=Page Not Found')) {
       console.log('  → Perfil não encontrado'); return found;
@@ -192,7 +266,7 @@ async function scrapePerfil(page, username) {
       if (novos.length === 0) {
         semNovidade++;
         await page.evaluate(() => window.scrollBy(0, 1000));
-        await sleep(2500);
+        await randSleep(2500, 4000);
         continue;
       }
       semNovidade = 0;
@@ -201,7 +275,14 @@ async function scrapePerfil(page, username) {
         visitados.add(url);
         try {
           await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-          await sleep(2000);
+          await randSleep(3000, 5000);
+
+          // Bloqueio no meio? pausa para re-login e continua
+          if (estaNaTelaDeLogin(page)) {
+            if (!await garantirLogado(page)) { parar = true; break; }
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+            await randSleep(3000, 5000);
+          }
 
           const data = await obterData(page);
           if (data && data < DATA_MINIMA) {
@@ -209,23 +290,28 @@ async function scrapePerfil(page, username) {
             parar = true; break;
           }
 
-          const texto = await extrairTexto(page);
+          const { texto, likes, comentarios, views } = await extrairDados(page);
           if (temKeyword(texto)) {
-            console.log(`  ✔ ${formatarData(data)} — ${url}`);
-            found.push({ data: formatarData(data), perfil: `@${username}`, link: url });
+            console.log(`  ✔ ${formatarData(data)} | ❤ ${likes || '?'} 💬 ${comentarios || '?'} ▶ ${views || '-'} — ${url}`);
+            found.push({
+              data: formatarData(data),
+              perfil: `@${username}`,
+              link: url,
+              likes, comentarios, views,
+            });
           }
 
           await page.goto(`https://www.instagram.com/${username}/`, {
             waitUntil: 'domcontentloaded', timeout: 25000,
           });
-          await sleep(2000);
+          await randSleep(3000, 5000);
         } catch (e) {
           console.log(`  ! ${e.message.split('\n')[0]}`);
           try {
             await page.goto(`https://www.instagram.com/${username}/`, {
               waitUntil: 'domcontentloaded', timeout: 20000,
             });
-            await sleep(2000);
+            await randSleep(3000, 5000);
           } catch {}
         }
         if (parar) break;
@@ -233,7 +319,7 @@ async function scrapePerfil(page, username) {
 
       if (!parar) {
         await page.evaluate(() => window.scrollBy(0, 1000));
-        await sleep(2500);
+        await randSleep(2500, 4000);
       }
     }
   } catch (e) {
@@ -290,17 +376,13 @@ const SESSION_FILE = 'C:\\scraper\\ig_session.json';
   const todos = [];
   for (const p of PERFIS) {
     todos.push(...await scrapePerfil(page, p));
-    await sleep(3000);
+    // Salva parcial a cada perfil (não perde progresso se travar)
+    salvarCSV(todos);
+    await randSleep(8000, 12000); // pausa maior entre perfis evita bloqueio
   }
 
   await ctx.close();
-
-  const csv = [
-    'Data da Publicação,@ do Perfil,Link da Postagem',
-    ...todos.map(r => [escaparCSV(r.data), escaparCSV(r.perfil), escaparCSV(r.link)].join(','))
-  ].join('\n');
-
-  fs.writeFileSync('C:\\scraper\\resultados_instagram.csv', '﻿' + csv, 'utf-8');
+  salvarCSV(todos);
 
   console.log('\n════════════════════════════════');
   console.log(` TOTAL: ${todos.length} posts`);

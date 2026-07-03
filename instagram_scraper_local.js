@@ -258,6 +258,10 @@ async function scrapePerfil(page, username) {
     const visitados = new Set();
     let parar = false;
     let semNovidade = 0;
+    // Conta posts consecutivos ANTERIORES a 13/05. Só encerra o perfil depois
+    // de vários seguidos — assim posts FIXADOS antigos no topo não param a busca.
+    let antigosSeguidos = 0;
+    const LIMITE_ANTIGOS = 8;
 
     while (!parar && semNovidade < 5) {
       const links = await linksGrid(page);
@@ -285,10 +289,27 @@ async function scrapePerfil(page, username) {
           }
 
           const data = await obterData(page);
+
+          // Post anterior a 13/05: pode ser um FIXADO no topo. Pula sem coletar,
+          // mas só encerra o perfil após LIMITE_ANTIGOS posts antigos seguidos.
           if (data && data < DATA_MINIMA) {
-            console.log(`  → Post de ${formatarData(data)} (anterior a 13/05) — fim do perfil`);
-            parar = true; break;
+            antigosSeguidos++;
+            console.log(`  · Post de ${formatarData(data)} (anterior a 13/05) — ignorado [${antigosSeguidos}/${LIMITE_ANTIGOS}]`);
+            if (antigosSeguidos >= LIMITE_ANTIGOS) {
+              console.log('  → Vários posts antigos seguidos — fim do perfil');
+              parar = true;
+            }
+            // volta ao perfil e segue para o próximo
+            await page.goto(`https://www.instagram.com/${username}/`, {
+              waitUntil: 'domcontentloaded', timeout: 25000,
+            });
+            await randSleep(3000, 5000);
+            if (parar) break;
+            continue;
           }
+
+          // Post dentro do período (>= 13/05): zera o contador de antigos
+          antigosSeguidos = 0;
 
           const { texto, likes, comentarios, views } = await extrairDados(page);
           if (temKeyword(texto)) {

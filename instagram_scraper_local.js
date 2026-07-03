@@ -61,38 +61,62 @@ function escaparCSV(valor) {
 // ── Login ────────────────────────────────────────────────────────────────────
 async function login(page) {
   console.log('\n[LOGIN] Acessando Instagram...');
-  await page.goto('https://www.instagram.com/accounts/login/', {
+  await page.goto('https://www.instagram.com/', {
     waitUntil: 'domcontentloaded',
     timeout: 60000,
   });
-  await sleep(3000);
+  await sleep(4000);
 
-  // Aceitar cookies se aparecer
-  for (const seletor of [
-    'button:has-text("Aceitar tudo")',
-    'button:has-text("Allow all cookies")',
-    'button:has-text("Permitir cookies essenciais e opcionais")',
-  ]) {
+  // Aceitar cookies — tenta várias variações de texto e aguarda o botão aparecer
+  const cookieTextos = [
+    'Aceitar tudo',
+    'Allow all cookies',
+    'Permitir cookies essenciais e opcionais',
+    'Accept All',
+    'Aceitar cookies',
+  ];
+  for (const txt of cookieTextos) {
     try {
-      const btn = await page.$(seletor);
-      if (btn) { await btn.click(); await sleep(1500); break; }
+      const btn = page.getByRole('button', { name: txt, exact: false });
+      if (await btn.count() > 0) {
+        await btn.first().click();
+        console.log(`[LOGIN] Cookie banner aceito ("${txt}")`);
+        await sleep(2000);
+        break;
+      }
     } catch {}
   }
 
-  await page.fill('input[name="username"]', INSTAGRAM_USER);
-  await sleep(400);
-  await page.fill('input[name="password"]', INSTAGRAM_PASS);
-  await sleep(400);
-  await page.click('button[type="submit"]');
+  // Navegar para login se ainda não estiver lá
+  if (!page.url().includes('/accounts/login')) {
+    await page.goto('https://www.instagram.com/accounts/login/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000,
+    });
+    await sleep(3000);
+  }
+
+  // Aguardar campo de usuário com timeout generoso
+  console.log('[LOGIN] Aguardando formulário de login...');
+  await page.waitForSelector('input[name="username"]', { timeout: 60000 });
+
+  await page.locator('input[name="username"]').fill(INSTAGRAM_USER);
+  await sleep(500);
+  await page.locator('input[name="password"]').fill(INSTAGRAM_PASS);
+  await sleep(500);
+  await page.locator('button[type="submit"]').click();
   console.log('[LOGIN] Credenciais enviadas, aguardando...');
-  await sleep(6000);
+  await sleep(8000);
 
   // Fechar diálogos "Salvar informações" / "Ativar notificações"
-  for (let i = 0; i < 3; i++) {
-    for (const txt of ['Agora não', 'Not Now', 'Cancelar', 'Skip']) {
+  for (let i = 0; i < 4; i++) {
+    for (const txt of ['Agora não', 'Not Now', 'Cancelar', 'Skip', 'Não agora']) {
       try {
-        const btn = await page.$(`button:has-text("${txt}")`);
-        if (btn) { await btn.click(); await sleep(1500); }
+        const btn = page.getByRole('button', { name: txt, exact: false });
+        if (await btn.count() > 0) {
+          await btn.first().click();
+          await sleep(1500);
+        }
       } catch {}
     }
   }

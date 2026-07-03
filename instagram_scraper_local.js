@@ -2,19 +2,20 @@
  * Instagram Scraper - Tramontina/Guru/Live/Cupom
  *
  * Pré-requisitos:
+ *   cd C:\scraper
  *   npm install playwright
- *   npx playwright install chromium
  *
- * Como rodar:
+ * Como rodar (na pasta C:\scraper):
  *   node instagram_scraper_local.js
  *
- * O resultado sai em: resultados_instagram.csv
+ * Resultado: C:\scraper\resultados_instagram.csv
  */
 
 const { chromium } = require('playwright');
 const fs = require('fs');
+const path = require('path');
 
-// ── Configurações ────────────────────────────────────────────────────────────
+// ── Configurações ─────────────────────────────────────────────────────────────
 const INSTAGRAM_USER = 'danielcalvo';
 const INSTAGRAM_PASS = 'D@ni5552';
 const DATA_MINIMA    = new Date('2026-05-13T00:00:00');
@@ -39,7 +40,7 @@ const PERFIS = [
   'nutrihelenawinter',
 ];
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function temKeyword(texto) {
@@ -58,140 +59,159 @@ function escaparCSV(valor) {
   return `"${String(valor).replace(/"/g, '""')}"`;
 }
 
-// ── Login ────────────────────────────────────────────────────────────────────
-async function login(page) {
-  console.log('\n[LOGIN] Acessando Instagram...');
-  await page.goto('https://www.instagram.com/', {
-    waitUntil: 'domcontentloaded',
-    timeout: 60000,
-  });
-  await sleep(4000);
+async function screenshot(page, nome) {
+  try {
+    await page.screenshot({ path: `C:\\scraper\\debug_${nome}.png`, fullPage: false });
+    console.log(`  [DEBUG] screenshot salvo: debug_${nome}.png`);
+  } catch {}
+}
 
-  // Aceitar cookies — tenta várias variações de texto e aguarda o botão aparecer
-  const cookieTextos = [
+// ── Login ─────────────────────────────────────────────────────────────────────
+async function login(page) {
+  console.log('\n[LOGIN] Abrindo Instagram...');
+
+  // Usar chrome real instalado no Windows
+  // A instância já foi criada com channel:'chrome'
+  await page.goto('https://www.instagram.com/', {
+    waitUntil: 'load',
+    timeout: 90000,
+  });
+  await sleep(5000);
+  await screenshot(page, '01_home');
+
+  // Aceitar banner de cookies — tenta vários textos possíveis
+  const cookieBtns = [
     'Aceitar tudo',
     'Allow all cookies',
-    'Permitir cookies essenciais e opcionais',
+    'Permitir cookies',
     'Accept All',
-    'Aceitar cookies',
+    'Aceitar',
+    'OK',
   ];
-  for (const txt of cookieTextos) {
+  for (const txt of cookieBtns) {
     try {
-      const btn = page.getByRole('button', { name: txt, exact: false });
-      if (await btn.count() > 0) {
-        await btn.first().click();
-        console.log(`[LOGIN] Cookie banner aceito ("${txt}")`);
-        await sleep(2000);
+      const btns = await page.getByRole('button', { name: new RegExp(txt, 'i') }).all();
+      if (btns.length > 0) {
+        await btns[0].click();
+        console.log(`[LOGIN] Cookie aceito ("${txt}")`);
+        await sleep(2500);
         break;
       }
     } catch {}
   }
 
-  // Navegar para login se ainda não estiver lá
-  if (!page.url().includes('/accounts/login')) {
-    await page.goto('https://www.instagram.com/accounts/login/', {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000,
-    });
-    await sleep(3000);
-  }
+  await screenshot(page, '02_apos_cookie');
 
-  // Aguardar campo de usuário com timeout generoso
-  console.log('[LOGIN] Aguardando formulário de login...');
-  await page.waitForSelector('input[name="username"]', { timeout: 60000 });
+  // Ir direto para login
+  await page.goto('https://www.instagram.com/accounts/login/', {
+    waitUntil: 'load',
+    timeout: 90000,
+  });
+  await sleep(5000);
+  await screenshot(page, '03_login_page');
 
-  await page.locator('input[name="username"]').fill(INSTAGRAM_USER);
-  await sleep(500);
-  await page.locator('input[name="password"]').fill(INSTAGRAM_PASS);
-  await sleep(500);
-  await page.locator('button[type="submit"]').click();
-  console.log('[LOGIN] Credenciais enviadas, aguardando...');
-  await sleep(8000);
-
-  // Fechar diálogos "Salvar informações" / "Ativar notificações"
-  for (let i = 0; i < 4; i++) {
-    for (const txt of ['Agora não', 'Not Now', 'Cancelar', 'Skip', 'Não agora']) {
-      try {
-        const btn = page.getByRole('button', { name: txt, exact: false });
-        if (await btn.count() > 0) {
-          await btn.first().click();
-          await sleep(1500);
-        }
-      } catch {}
-    }
-  }
-  console.log('[LOGIN] OK\n');
-}
-
-// ── Extrair texto de um post ─────────────────────────────────────────────────
-async function extrairTextoPost(page) {
-  const seletores = [
-    // legenda principal
-    'div[data-testid="post-comment-root"] span',
-    'article div._a9zs span',
-    'article div[class*="caption"] span',
-    'h1',
-    'div[class*="Caption"] span',
-  ];
-  let texto = '';
-  for (const s of seletores) {
+  // Aceitar cookies de novo se aparecerem
+  for (const txt of cookieBtns) {
     try {
-      const el = await page.$(s);
-      if (el) { texto += ' ' + (await el.textContent()); }
+      const btns = await page.getByRole('button', { name: new RegExp(txt, 'i') }).all();
+      if (btns.length > 0) { await btns[0].click(); await sleep(2000); break; }
     } catch {}
   }
 
-  // Textos alternativos das imagens/vídeos (cobrem Reels)
+  // Aguardar campo de usuário
+  console.log('[LOGIN] Aguardando campo de usuário (até 90s)...');
+  try {
+    await page.waitForSelector('input[name="username"]', { timeout: 90000 });
+  } catch {
+    await screenshot(page, '04_erro_sem_campo');
+    console.error('[ERRO] Campo de usuário não encontrado. Veja debug_04_erro_sem_campo.png em C:\\scraper\\');
+    process.exit(1);
+  }
+
+  await page.locator('input[name="username"]').click();
+  await page.locator('input[name="username"]').fill(INSTAGRAM_USER);
+  await sleep(600);
+  await page.locator('input[name="password"]').click();
+  await page.locator('input[name="password"]').fill(INSTAGRAM_PASS);
+  await sleep(600);
+  await screenshot(page, '05_antes_submit');
+
+  await page.locator('button[type="submit"]').click();
+  console.log('[LOGIN] Enviado. Aguardando...');
+  await sleep(9000);
+  await screenshot(page, '06_pos_login');
+
+  // Fechar popups pós-login
+  for (let i = 0; i < 4; i++) {
+    for (const txt of ['Agora não', 'Not Now', 'Cancelar', 'Skip', 'Não agora', 'Dismiss']) {
+      try {
+        const btns = await page.getByRole('button', { name: new RegExp(txt, 'i') }).all();
+        if (btns.length > 0) { await btns[0].click(); await sleep(1500); }
+      } catch {}
+    }
+  }
+
+  console.log('[LOGIN] OK\n');
+}
+
+// ── Extrair texto de um post ──────────────────────────────────────────────────
+async function extrairTextoPost(page) {
+  let texto = '';
+  const seletores = [
+    'h1',
+    'div._a9zs span',
+    'div[data-testid="post-comment-root"] span',
+    'article span',
+  ];
+  for (const s of seletores) {
+    try {
+      const els = await page.$$(s);
+      for (const el of els) texto += ' ' + (await el.textContent().catch(() => ''));
+    } catch {}
+  }
   try {
     const alts = await page.$$eval('img[alt]', imgs => imgs.map(i => i.alt));
     texto += ' ' + alts.join(' ');
   } catch {}
-
   return texto;
 }
 
-// ── Obter data de um post (já aberto) ───────────────────────────────────────
+// ── Obter data de um post ─────────────────────────────────────────────────────
 async function obterDataPost(page) {
   try {
     const dateAttr = await page.$eval('time[datetime]', el => el.getAttribute('datetime'));
     return dateAttr ? new Date(dateAttr) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-// ── Coletar links de posts da grid ──────────────────────────────────────────
+// ── Coletar links da grid ─────────────────────────────────────────────────────
 async function coletarLinksGrid(page) {
-  const links = await page.$$eval('a[href*="/p/"], a[href*="/reel/"]', els =>
-    [...new Set(els.map(a => a.href))]
-  );
-  return links;
+  try {
+    return await page.$$eval('a[href*="/p/"], a[href*="/reel/"]', els =>
+      [...new Set(els.map(a => a.href))]
+    );
+  } catch { return []; }
 }
 
-// ── Scraping de um perfil ────────────────────────────────────────────────────
+// ── Scraping de um perfil ─────────────────────────────────────────────────────
 async function scrapePerfil(page, username) {
   const resultados = [];
-  console.log(`[PERFIL] @${username}`);
+  console.log(`\n[PERFIL] @${username}`);
 
   try {
     await page.goto(`https://www.instagram.com/${username}/`, {
       waitUntil: 'domcontentloaded',
-      timeout: 30000,
+      timeout: 40000,
     });
-    await sleep(3000);
+    await sleep(3500);
 
-    // Perfil inexistente
     if (await page.$('text=Esta página não está disponível') ||
         await page.$('text=Page Not Found')) {
-      console.log(`  → Perfil não encontrado`);
-      return resultados;
+      console.log('  → Perfil não encontrado'); return resultados;
     }
-
-    // Perfil privado
     if (await page.$('h2:has-text("Esta conta é privada")') ||
         await page.$('h2:has-text("This account is private")')) {
-      console.log(`  → Conta privada, pulando`);
-      return resultados;
+      console.log('  → Conta privada'); return resultados;
     }
 
     const linksVisitados = new Set();
@@ -208,55 +228,41 @@ async function scrapePerfil(page, username) {
         await sleep(2500);
         continue;
       }
-
       scrollSemNovidade = 0;
 
       for (const postUrl of novos) {
         linksVisitados.add(postUrl);
-
         try {
-          await page.goto(postUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          await page.goto(postUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
           await sleep(2000);
 
           const dataPost = await obterDataPost(page);
-
-          // Se post for mais antigo que a data mínima → parar este perfil
           if (dataPost && dataPost < DATA_MINIMA) {
-            console.log(`  → Post de ${formatarData(dataPost)} anterior a 13/05/2026 — parando`);
+            console.log(`  → Post de ${formatarData(dataPost)} anterior a 13/05 — parando`);
             pararPerfil = true;
             break;
           }
 
           const texto = await extrairTextoPost(page);
-
           if (temKeyword(texto)) {
             const dataStr = formatarData(dataPost);
             console.log(`  ✔ ${dataStr} — ${postUrl}`);
-            resultados.push({
-              data: dataStr,
-              perfil: `@${username}`,
-              link: postUrl,
-            });
+            resultados.push({ data: dataStr, perfil: `@${username}`, link: postUrl });
           }
 
-          // Voltar para o perfil
           await page.goto(`https://www.instagram.com/${username}/`, {
-            waitUntil: 'domcontentloaded',
-            timeout: 20000,
+            waitUntil: 'domcontentloaded', timeout: 25000,
           });
           await sleep(2000);
-
         } catch (err) {
-          console.log(`  ! Erro no post: ${err.message}`);
+          console.log(`  ! Erro no post: ${err.message.split('\n')[0]}`);
           try {
             await page.goto(`https://www.instagram.com/${username}/`, {
-              waitUntil: 'domcontentloaded',
-              timeout: 20000,
+              waitUntil: 'domcontentloaded', timeout: 25000,
             });
             await sleep(2000);
           } catch {}
         }
-
         if (pararPerfil) break;
       }
 
@@ -265,22 +271,34 @@ async function scrapePerfil(page, username) {
         await sleep(2500);
       }
     }
-
   } catch (err) {
-    console.log(`  ! Erro geral: ${err.message}`);
+    console.log(`  ! Erro geral: ${err.message.split('\n')[0]}`);
   }
 
-  console.log(`  → ${resultados.length} posts encontrados`);
+  console.log(`  → ${resultados.length} posts relevantes`);
   return resultados;
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
 (async () => {
-  const browser = await chromium.launch({
-    headless: false,   // true = sem janela visível
-    slowMo: 50,
-    args: ['--start-maximized'],
-  });
+  // Tenta usar Chrome real; se não encontrar, usa Chromium do Playwright
+  let browser;
+  try {
+    browser = await chromium.launch({
+      channel: 'chrome',      // usa o Google Chrome instalado no Windows
+      headless: false,
+      slowMo: 60,
+      args: ['--start-maximized', '--disable-blink-features=AutomationControlled'],
+    });
+    console.log('[BROWSER] Usando Google Chrome instalado');
+  } catch {
+    browser = await chromium.launch({
+      headless: false,
+      slowMo: 60,
+      args: ['--start-maximized', '--disable-blink-features=AutomationControlled'],
+    });
+    console.log('[BROWSER] Chrome não encontrado, usando Chromium do Playwright');
+  }
 
   const context = await browser.newContext({
     userAgent:
@@ -288,37 +306,44 @@ async function scrapePerfil(page, username) {
       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 900 },
     locale: 'pt-BR',
+    extraHTTPHeaders: {
+      'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+    },
   });
 
   const page = await context.newPage();
 
+  // Ocultar sinais de automação
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  });
+
   await login(page);
 
   const todos = [];
-
   for (const perfil of PERFIS) {
-    const resultado = await scrapePerfil(page, perfil);
-    todos.push(...resultado);
-    await sleep(3000); // pausa entre perfis
+    const res = await scrapePerfil(page, perfil);
+    todos.push(...res);
+    await sleep(3000);
   }
 
   await browser.close();
 
-  // ── Gerar CSV ──────────────────────────────────────────────────────────────
+  // ── Gerar CSV ─────────────────────────────────────────────────────────────
   const cabecalho = 'Data da Publicação,@ do Perfil,Link da Postagem';
   const linhas = todos.map(r =>
     [escaparCSV(r.data), escaparCSV(r.perfil), escaparCSV(r.link)].join(',')
   );
   const csv = [cabecalho, ...linhas].join('\n');
-  const arquivoCSV = 'resultados_instagram.csv';
-  fs.writeFileSync(arquivoCSV, '﻿' + csv, 'utf-8'); // BOM para Excel/Sheets
+  const arquivoCSV = 'C:\\scraper\\resultados_instagram.csv';
+  fs.writeFileSync(arquivoCSV, '﻿' + csv, 'utf-8');
 
-  console.log(`\n═══════════════════════════════════`);
-  console.log(` TOTAL ENCONTRADO: ${todos.length} posts`);
-  console.log(` Arquivo salvo: ${arquivoCSV}`);
-  console.log(`═══════════════════════════════════`);
-  console.log('\nImporte o CSV no Google Sheets:');
+  console.log('\n════════════════════════════════════');
+  console.log(` TOTAL: ${todos.length} posts encontrados`);
+  console.log(` Arquivo: ${arquivoCSV}`);
+  console.log('════════════════════════════════════');
+  console.log('\nImporte no Google Sheets:');
   console.log('  1. Abra sheets.new');
   console.log('  2. Arquivo → Importar → selecione resultados_instagram.csv');
-  console.log('  3. Separador: vírgula');
+  console.log('  3. Separador: vírgula → OK');
 })();

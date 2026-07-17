@@ -288,22 +288,28 @@ async function extrairDados(page) {
     ogDesc = await page.$eval('meta[property="og:description"]', el => el.content || '');
   } catch {}
 
-  // LEGENDA (só a legenda, não o nome do perfil nem UI da página).
-  // og:description = "123 likes, 45 comments - Nome (@handle) on Instagram: "legenda"".
-  // Pegamos apenas o trecho após "Instagram:".
+  // LEGENDA para busca de palavras-chave.
+  // A og:description tem a forma (varia com o idioma do navegador):
+  //   "123 curtidas, 45 comentários - Nome (@handle) no Instagram: "legenda""
+  //   "123 likes, 45 comments - Name (@handle) on Instagram: "caption""
+  // Tenta isolar o trecho após "(no|on|em) Instagram:"; se não achar (formato
+  // diferente), usa a og:description inteira — o filtro whole-word de "live"
+  // já evita falsos positivos com o @ do perfil (ex.: feoliveira).
   let legenda = '';
-  const mCap = ogDesc.match(/on\s+instagram:?\s*(.*)$/is);
-  if (mCap) {
+  const mCap = ogDesc.match(/(?:on|no|em)\s+instagram\s*:?\s*(.*)$/is);
+  if (mCap && mCap[1].trim()) {
     legenda = mCap[1].replace(/^["“”']+|["“”'.\s]+$/g, '');
+  } else {
+    legenda = ogDesc; // fallback: usa a descrição completa
   }
-  // Acrescenta a legenda visível (h1), que traz o texto completo do post
-  for (const s of ['h1', 'article h1', 'div[class*="Caption"] span']) {
+  // Acrescenta a legenda visível (h1 e spans), que traz o texto completo do post
+  for (const s of ['h1', 'article h1', 'div[class*="Caption"] span', 'div[data-testid="post-caption"]']) {
     try {
       const els = await page.$$(s);
       for (const el of els) legenda += ' ' + (await el.textContent().catch(() => ''));
     } catch {}
   }
-  const texto = legenda; // busca de keywords roda só sobre a legenda
+  const texto = legenda;
 
   // Likes e comentários do og:description (funciona em pt e en)
   let likes = '', comentarios = '';

@@ -388,6 +388,7 @@ async function scrapePerfil(page, username) {
         await randSleep(2500, 4000);
         continue;
       }
+      console.log(`  … ${novos.length} novos posts na grade (verificando um a um)`);
       semNovidade = 0;
 
       for (const url of novos) {
@@ -438,13 +439,16 @@ async function scrapePerfil(page, username) {
 
           const { texto, likes, comentarios, views } = await extrairDados(page);
           if (temKeyword(texto)) {
-            console.log(`  ✔ ${formatarData(data)} | ❤ ${likes || '?'} 💬 ${comentarios || '?'} ▶ ${views || '-'} — ${url}`);
+            console.log(`  ✔ MATCH ${formatarData(data)} | ❤ ${likes || '?'} 💬 ${comentarios || '?'} ▶ ${views || '-'} — ${url}`);
             found.push({
               data: formatarData(data),
               perfil: `@${username}`,
               link: url,
               likes, comentarios, views,
             });
+          } else {
+            // Post no intervalo mas sem palavra-chave — mostra para ver o progresso
+            console.log(`  · ${formatarData(data)} sem palavra-chave`);
           }
 
           await page.goto(`https://www.instagram.com/${username}/`, {

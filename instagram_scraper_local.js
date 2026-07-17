@@ -289,27 +289,41 @@ async function extrairDados(page) {
   } catch {}
 
   // LEGENDA para busca de palavras-chave.
-  // A og:description tem a forma (varia com o idioma do navegador):
-  //   "123 curtidas, 45 comentários - Nome (@handle) no Instagram: "legenda""
-  //   "123 likes, 45 comments - Name (@handle) on Instagram: "caption""
-  // Tenta isolar o trecho após "(no|on|em) Instagram:"; se não achar (formato
-  // diferente), usa a og:description inteira — o filtro whole-word de "live"
-  // já evita falsos positivos com o @ do perfil (ex.: feoliveira).
+  // Quando logado, o Instagram carrega como app e a og:description costuma vir
+  // GENÉRICA (sem a legenda real). Por isso a fonte principal agora é o DOM.
   let legenda = '';
+
+  // 1) Tenta extrair a legenda da og:description (funciona quando disponível)
   const mCap = ogDesc.match(/(?:on|no|em)\s+instagram\s*:?\s*(.*)$/is);
   if (mCap && mCap[1].trim()) {
-    legenda = mCap[1].replace(/^["“”']+|["“”'.\s]+$/g, '');
-  } else {
-    legenda = ogDesc; // fallback: usa a descrição completa
+    legenda += ' ' + mCap[1].replace(/^["“”']+|["“”'.\s]+$/g, '');
   }
-  // Acrescenta a legenda visível (h1 e spans), que traz o texto completo do post
-  for (const s of ['h1', 'article h1', 'div[class*="Caption"] span', 'div[data-testid="post-caption"]']) {
+
+  // 2) Legenda visível no DOM (fonte principal quando logado)
+  for (const s of ['h1', 'article h1', 'div[class*="Caption"] span',
+                   'div[data-testid="post-caption"]', 'ul li h1', 'span[dir="auto"]']) {
     try {
       const els = await page.$$(s);
       for (const el of els) legenda += ' ' + (await el.textContent().catch(() => ''));
     } catch {}
   }
+
+  // 3) Fallback final: texto do artigo/diálogo inteiro (garante achar a legenda)
+  if (legenda.replace(/\s/g, '').length < 5) {
+    try {
+      legenda += ' ' + await page.evaluate(() => {
+        const art = document.querySelector('article') || document.querySelector('main');
+        return art ? art.innerText : '';
+      });
+    } catch {}
+  }
+
   const texto = legenda;
+
+  // DEBUG: mostra o começo do texto analisado (defina DEBUG=1 para ativar)
+  if (process.env.DEBUG) {
+    console.log(`    [txt] "${texto.replace(/\s+/g, ' ').trim().slice(0, 140)}"`);
+  }
 
   // Likes e comentários do og:description (funciona em pt e en)
   let likes = '', comentarios = '';

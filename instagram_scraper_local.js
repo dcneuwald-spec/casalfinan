@@ -325,27 +325,40 @@ async function extrairDados(page) {
     console.log(`    [txt] "${texto.replace(/\s+/g, ' ').trim().slice(0, 140)}"`);
   }
 
-  // Likes e comentários do og:description (funciona em pt e en)
-  let likes = '', comentarios = '';
-  const mLikes = ogDesc.match(/([\d.,]+)\s*(likes|curtidas)/i);
-  if (mLikes) likes = mLikes[1];
-  const mCom = ogDesc.match(/([\d.,]+)\s*(comments|comentários|comentarios)/i);
-  if (mCom) comentarios = mCom[1];
-
-  // Visualizações (vídeos/reels): procura no texto da página
-  let views = '';
+  // ── MÉTRICAS: lidas do texto da PÁGINA (confiável quando logado) ────────────
+  // Aceita números como 1.234, 12 mil, 1,2 mi, 10K, 1.2M
+  const NUM = '([\\d.,]+\\s*(?:mil|mi|k|m|b)?)';
+  let corpo = '';
   try {
-    const corpo = await page.evaluate(() => document.body.innerText);
-    const mViews = corpo.match(/([\d.,]+)\s*(visualizações|reproduções|views|plays)/i);
-    if (mViews) views = mViews[1];
+    corpo = await page.evaluate(() => {
+      const art = document.querySelector('article') || document.querySelector('main') || document.body;
+      return art.innerText;
+    });
   } catch {}
 
-  // Fallback: contar comentários visíveis se og não trouxe
-  if (!comentarios) {
-    try {
-      const n = await page.locator('ul ul').count();
-      if (n > 0) comentarios = String(n) + '+';
-    } catch {}
+  let likes = '', comentarios = '', views = '';
+
+  // Curtidas: "1.234 curtidas" / "1,234 likes" / "Curtido por X e outras N pessoas"
+  let m = corpo.match(new RegExp(NUM + '\\s*(?:curtidas|likes)', 'i'))
+       || corpo.match(new RegExp('outr[ao]s?\\s*' + NUM + '\\s*pessoas', 'i'));
+  if (m) likes = m[1].trim();
+
+  // Comentários: "Ver todos os N comentários" / "View all N comments" / "N comentários"
+  m = corpo.match(new RegExp('(?:ver todos os|view all)\\s*' + NUM + '\\s*coment', 'i'))
+   || corpo.match(new RegExp(NUM + '\\s*coment', 'i'))
+   || corpo.match(new RegExp(NUM + '\\s*comments', 'i'));
+  if (m) comentarios = m[1].trim();
+
+  // Visualizações/reproduções (vídeos/reels)
+  m = corpo.match(new RegExp(NUM + '\\s*(?:visualizações|visualizacoes|reproduções|reproducoes|views|plays)', 'i'));
+  if (m) views = m[1].trim();
+
+  // Fallback para métricas na og:description (posts públicos sem login)
+  if (!likes) { const x = ogDesc.match(/([\d.,]+)\s*(likes|curtidas)/i); if (x) likes = x[1]; }
+  if (!comentarios) { const x = ogDesc.match(/([\d.,]+)\s*(comments|coment)/i); if (x) comentarios = x[1]; }
+
+  if (process.env.DEBUG) {
+    console.log(`    [met] likes=${likes||'-'} coment=${comentarios||'-'} views=${views||'-'}`);
   }
 
   return { texto, likes, comentarios, views };

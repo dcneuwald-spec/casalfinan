@@ -10,6 +10,18 @@
  *   cd C:\scraper
  *   node instagram_scraper_local.js
  *
+ * ── SELEÇÃO DE DATAS ──────────────────────────────────────────────────────
+ * Sem argumentos: coleta de 13/05/2026 até HOJE.
+ *
+ * Com intervalo personalizado (data inicial e, opcionalmente, data final):
+ *   node instagram_scraper_local.js 03/07/2026
+ *       → do dia 03/07/2026 até hoje
+ *   node instagram_scraper_local.js 03/07/2026 17/07/2026
+ *       → do dia 03/07/2026 até 17/07/2026
+ *
+ * Os resultados são SEMPRE adicionados ao mesmo arquivo, sem apagar o que já
+ * existe e sem duplicar posts já coletados (deduplicação pelo link).
+ *
  * Resultado: C:\scraper\resultados_instagram.csv
  */
 
@@ -18,8 +30,35 @@ const fs = require('fs');
 
 const INSTAGRAM_USER = 'danielcalvo';
 const INSTAGRAM_PASS = 'D@ni5552';
-const DATA_MINIMA    = new Date('2026-05-13T00:00:00');
 const KEYWORDS       = ['tramontina', 'guru', 'live', 'cupom'];
+
+// ── Datas: lê da linha de comando (DD/MM/AAAA) ou usa padrões ────────────────
+function parseDataBR(str, fimDoDia = false) {
+  const m = String(str).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const [, d, mo, y] = m;
+  const dt = new Date(Number(y), Number(mo) - 1, Number(d));
+  if (fimDoDia) dt.setHours(23, 59, 59, 999);
+  return dt;
+}
+
+const argInicio = process.argv[2];
+const argFim    = process.argv[3];
+
+// Data inicial: argumento ou 13/05/2026 (início do dia)
+const DATA_INICIAL = argInicio
+  ? parseDataBR(argInicio, false)
+  : new Date('2026-05-13T00:00:00');
+
+// Data final: argumento ou HOJE (fim do dia, para incluir posts de hoje)
+const DATA_FINAL = argFim
+  ? parseDataBR(argFim, true)
+  : (() => { const h = new Date(); h.setHours(23, 59, 59, 999); return h; })();
+
+if (!DATA_INICIAL || !DATA_FINAL) {
+  console.error('[ERRO] Data inválida. Use o formato DD/MM/AAAA. Ex.: 03/07/2026');
+  process.exit(1);
+}
 
 const PERFIS = [
   'gilneia.bemestar',
@@ -64,15 +103,44 @@ async function snap(page, nome) {
   } catch {}
 }
 
+const CSV_PATH = 'C:\\scraper\\resultados_instagram.csv';
+const CABECALHO = 'Data da Publicação,@ do Perfil,Link da Postagem,Curtidas,Comentários,Visualizações';
+
+// Lê o CSV existente e retorna { linhas: [linhasBrutas], links: Set }
+function lerCSVExistente() {
+  const out = { linhas: [], links: new Set() };
+  try {
+    if (!fs.existsSync(CSV_PATH)) return out;
+    const conteudo = fs.readFileSync(CSV_PATH, 'utf-8').replace(/^﻿/, '');
+    const linhas = conteudo.split('\n').filter(l => l.trim());
+    for (const l of linhas) {
+      if (l.startsWith('Data da Publicação')) continue; // cabeçalho
+      out.linhas.push(l);
+      const m = l.match(/(https?:\/\/[^",]+\/(?:p|reel)\/[^"/,]+)/i);
+      if (m) out.links.add(m[1].replace(/\/$/, ''));
+    }
+  } catch {}
+  return out;
+}
+
+// Salva complementando: mantém tudo que já existia + adiciona apenas os novos
+// (deduplicação pelo link da postagem).
 function salvarCSV(todos) {
-  const csv = [
-    'Data da Publicação,@ do Perfil,Link da Postagem,Curtidas,Comentários,Visualizações',
-    ...todos.map(r => [
+  const existente = lerCSVExistente();
+  const linhasNovas = [];
+
+  for (const r of todos) {
+    const linkNorm = String(r.link || '').replace(/\/$/, '');
+    if (existente.links.has(linkNorm)) continue; // já estava na planilha
+    existente.links.add(linkNorm);
+    linhasNovas.push([
       escaparCSV(r.data), escaparCSV(r.perfil), escaparCSV(r.link),
       escaparCSV(r.likes), escaparCSV(r.comentarios), escaparCSV(r.views),
-    ].join(','))
-  ].join('\n');
-  fs.writeFileSync('C:\\scraper\\resultados_instagram.csv', '﻿' + csv, 'utf-8');
+    ].join(','));
+  }
+
+  const csv = [CABECALHO, ...existente.linhas, ...linhasNovas].join('\n');
+  fs.writeFileSync(CSV_PATH, '﻿' + csv, 'utf-8');
 }
 
 // ─── LOGIN MANUAL ─────────────────────────────────────────────────────────────
@@ -290,16 +358,15 @@ async function scrapePerfil(page, username) {
 
           const data = await obterData(page);
 
-          // Post anterior a 13/05: pode ser um FIXADO no topo. Pula sem coletar,
-          // mas só encerra o perfil após LIMITE_ANTIGOS posts antigos seguidos.
-          if (data && data < DATA_MINIMA) {
+          // Post ANTERIOR à data inicial: pode ser um FIXADO no topo. Pula sem
+          // coletar, mas só encerra o perfil após LIMITE_ANTIGOS antigos seguidos.
+          if (data && data < DATA_INICIAL) {
             antigosSeguidos++;
-            console.log(`  · Post de ${formatarData(data)} (anterior a 13/05) — ignorado [${antigosSeguidos}/${LIMITE_ANTIGOS}]`);
+            console.log(`  · Post de ${formatarData(data)} (antes de ${formatarData(DATA_INICIAL)}) — ignorado [${antigosSeguidos}/${LIMITE_ANTIGOS}]`);
             if (antigosSeguidos >= LIMITE_ANTIGOS) {
               console.log('  → Vários posts antigos seguidos — fim do perfil');
               parar = true;
             }
-            // volta ao perfil e segue para o próximo
             await page.goto(`https://www.instagram.com/${username}/`, {
               waitUntil: 'domcontentloaded', timeout: 25000,
             });
@@ -308,7 +375,18 @@ async function scrapePerfil(page, username) {
             continue;
           }
 
-          // Post dentro do período (>= 13/05): zera o contador de antigos
+          // Post POSTERIOR à data final: fora do intervalo. Pula sem coletar
+          // e sem contar como antigo (é mais recente, não mais velho).
+          if (data && data > DATA_FINAL) {
+            console.log(`  · Post de ${formatarData(data)} (depois de ${formatarData(DATA_FINAL)}) — ignorado`);
+            await page.goto(`https://www.instagram.com/${username}/`, {
+              waitUntil: 'domcontentloaded', timeout: 25000,
+            });
+            await randSleep(3000, 5000);
+            continue;
+          }
+
+          // Post dentro do intervalo: zera o contador de antigos
           antigosSeguidos = 0;
 
           const { texto, likes, comentarios, views } = await extrairDados(page);
@@ -355,6 +433,11 @@ async function scrapePerfil(page, username) {
 const SESSION_FILE = 'C:\\scraper\\ig_session.json';
 
 (async () => {
+  console.log('\n════════════════════════════════════════════');
+  console.log(` INTERVALO: ${formatarData(DATA_INICIAL)}  até  ${formatarData(DATA_FINAL)}`);
+  console.log(` Arquivo:   complementando ${CSV_PATH}`);
+  console.log('════════════════════════════════════════════');
+
   // Usa perfil persistente: guarda a sessão logada numa pasta para
   // não precisar logar de novo nas próximas execuções.
   const USER_DATA_DIR = 'C:\\scraper\\chrome_profile';
@@ -405,12 +488,15 @@ const SESSION_FILE = 'C:\\scraper\\ig_session.json';
   await ctx.close();
   salvarCSV(todos);
 
-  console.log('\n════════════════════════════════');
-  console.log(` TOTAL: ${todos.length} posts`);
-  console.log(' Arquivo: C:\\scraper\\resultados_instagram.csv');
-  console.log('════════════════════════════════');
+  const totalArquivo = lerCSVExistente().linhas.length;
+  console.log('\n════════════════════════════════════════════');
+  console.log(` Coletados nesta execução: ${todos.length} posts`);
+  console.log(` Total na planilha agora:  ${totalArquivo} posts`);
+  console.log(` Intervalo: ${formatarData(DATA_INICIAL)} até ${formatarData(DATA_FINAL)}`);
+  console.log(` Arquivo:   ${CSV_PATH}`);
+  console.log('════════════════════════════════════════════');
   console.log('\nPara importar no Google Sheets:');
-  console.log('  1. Abra sheets.new');
+  console.log('  1. Abra sua planilha');
   console.log('  2. Arquivo → Importar → selecione o CSV');
   console.log('  3. Separador: vírgula → OK');
 })();

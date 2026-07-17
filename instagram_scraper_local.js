@@ -288,18 +288,12 @@ async function extrairDados(page) {
     ogDesc = await page.$eval('meta[property="og:description"]', el => el.content || '');
   } catch {}
 
-  // LEGENDA para busca de palavras-chave.
-  // Quando logado, o Instagram carrega como app e a og:description costuma vir
-  // GENÉRICA (sem a legenda real). Por isso a fonte principal agora é o DOM.
+  // LEGENDA para busca de palavras-chave — apenas do DOM real do post.
+  // NÃO usamos a og:description para o texto: quando não-logado ela vem genérica
+  // ("Não perca nenhum post... Cadastre-se no Instagram...") e polui a busca.
   let legenda = '';
 
-  // 1) Tenta extrair a legenda da og:description (funciona quando disponível)
-  const mCap = ogDesc.match(/(?:on|no|em)\s+instagram\s*:?\s*(.*)$/is);
-  if (mCap && mCap[1].trim()) {
-    legenda += ' ' + mCap[1].replace(/^["“”']+|["“”'.\s]+$/g, '');
-  }
-
-  // 2) Legenda visível no DOM (fonte principal quando logado)
+  // Legenda visível no DOM
   for (const s of ['h1', 'article h1', 'div[class*="Caption"] span',
                    'div[data-testid="post-caption"]', 'ul li h1', 'span[dir="auto"]']) {
     try {
@@ -308,7 +302,7 @@ async function extrairDados(page) {
     } catch {}
   }
 
-  // 3) Fallback final: texto do artigo/diálogo inteiro (garante achar a legenda)
+  // Fallback: texto do artigo inteiro se nada foi captado
   if (legenda.replace(/\s/g, '').length < 5) {
     try {
       legenda += ' ' + await page.evaluate(() => {
@@ -317,6 +311,17 @@ async function extrairDados(page) {
       });
     } catch {}
   }
+
+  // Remove textos genéricos da UI do Instagram (não fazem parte da legenda)
+  const LIXO = [
+    /Não perca nenhum post de .*?(?=Cadastre-se|Sign up|$)/gi,
+    /Cadastre-se no Instagram para ficar por dentro das novidades\.?/gi,
+    /Ao continuar, você concorda com os Termos[^.]*\.?/gi,
+    /See posts, videos and more[^.]*\.?/gi,
+    /Sign up to see photos[^.]*\.?/gi,
+    /Log in to see[^.]*\.?/gi,
+  ];
+  for (const rx of LIXO) legenda = legenda.replace(rx, ' ');
 
   const texto = legenda;
 

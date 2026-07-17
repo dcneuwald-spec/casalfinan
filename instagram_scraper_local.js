@@ -30,7 +30,16 @@ const fs = require('fs');
 
 const INSTAGRAM_USER = 'danielcalvo';
 const INSTAGRAM_PASS = 'D@ni5552';
-const KEYWORDS       = ['tramontina', 'guru', 'live', 'cupom'];
+
+// Palavras-chave. wholeWord=true → só casa como palavra inteira (evita falsos
+// positivos: "live" dentro de "oliveira", "delivery" etc). As demais casam como
+// substring, para pegar hashtags como #tramontinaguru, #gurutramontina, #guru.
+const KEYWORDS = [
+  { termo: 'tramontina', wholeWord: false },
+  { termo: 'guru',       wholeWord: false },
+  { termo: 'cupom',      wholeWord: false },
+  { termo: 'live',       wholeWord: true  },
+];
 
 // ── Datas: lê da linha de comando (DD/MM/AAAA) ou usa padrões ────────────────
 function parseDataBR(str, fimDoDia = false) {
@@ -42,22 +51,49 @@ function parseDataBR(str, fimDoDia = false) {
   return dt;
 }
 
-const argInicio = process.argv[2];
-const argFim    = process.argv[3];
+// Datas definidas em obterDatas() — por argumento OU perguntando no terminal
+let DATA_INICIAL = null;
+let DATA_FINAL = null;
 
-// Data inicial: argumento ou 13/05/2026 (início do dia)
-const DATA_INICIAL = argInicio
-  ? parseDataBR(argInicio, false)
-  : new Date('2026-05-13T00:00:00');
+function pergunta(texto) {
+  const readline = require('readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(res => rl.question(texto, ans => { rl.close(); res(ans.trim()); }));
+}
 
-// Data final: argumento ou HOJE (fim do dia, para incluir posts de hoje)
-const DATA_FINAL = argFim
-  ? parseDataBR(argFim, true)
-  : (() => { const h = new Date(); h.setHours(23, 59, 59, 999); return h; })();
+async function obterDatas() {
+  const argInicio = process.argv[2];
+  const argFim    = process.argv[3];
+  const hojeFim = () => { const h = new Date(); h.setHours(23, 59, 59, 999); return h; };
 
-if (!DATA_INICIAL || !DATA_FINAL) {
-  console.error('[ERRO] Data inválida. Use o formato DD/MM/AAAA. Ex.: 03/07/2026');
-  process.exit(1);
+  // Se veio por argumento, usa direto
+  if (argInicio) {
+    DATA_INICIAL = parseDataBR(argInicio, false);
+    DATA_FINAL = argFim ? parseDataBR(argFim, true) : hojeFim();
+  } else {
+    // Modo interativo: pergunta as datas no terminal
+    console.log('\n─── SELEÇÃO DE DATAS (formato DD/MM/AAAA) ───');
+    while (!DATA_INICIAL) {
+      const r = await pergunta('Data INICIAL: ');
+      DATA_INICIAL = parseDataBR(r, false);
+      if (!DATA_INICIAL) console.log('  Data inválida. Ex.: 03/07/2026');
+    }
+    while (!DATA_FINAL) {
+      const r = await pergunta('Data FINAL (Enter = hoje): ');
+      if (r === '') { DATA_FINAL = hojeFim(); break; }
+      DATA_FINAL = parseDataBR(r, true);
+      if (!DATA_FINAL) console.log('  Data inválida. Ex.: 17/07/2026');
+    }
+  }
+
+  if (!DATA_INICIAL || !DATA_FINAL) {
+    console.error('[ERRO] Data inválida. Use o formato DD/MM/AAAA. Ex.: 03/07/2026');
+    process.exit(1);
+  }
+  if (DATA_INICIAL > DATA_FINAL) {
+    console.error('[ERRO] A data inicial é posterior à data final.');
+    process.exit(1);
+  }
 }
 
 const PERFIS = [
@@ -84,7 +120,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 function temKeyword(texto) {
   if (!texto) return false;
   const t = texto.toLowerCase();
-  return KEYWORDS.some(k => t.includes(k));
+  return KEYWORDS.some(k => {
+    if (k.wholeWord) {
+      // palavra inteira: limitada por não-letra (inclui #, espaço, início/fim)
+      return new RegExp(`(^|[^a-zà-ú])${k.termo}([^a-zà-ú]|$)`, 'i').test(t);
+    }
+    return t.includes(k.termo);
+  });
 }
 
 function formatarData(date) {
@@ -246,17 +288,22 @@ async function extrairDados(page) {
     ogDesc = await page.$eval('meta[property="og:description"]', el => el.content || '');
   } catch {}
 
-  // Texto para busca de keywords: og:description + legenda visível + alts
-  let texto = ogDesc;
+  // LEGENDA (só a legenda, não o nome do perfil nem UI da página).
+  // og:description = "123 likes, 45 comments - Nome (@handle) on Instagram: "legenda"".
+  // Pegamos apenas o trecho após "Instagram:".
+  let legenda = '';
+  const mCap = ogDesc.match(/on\s+instagram:?\s*(.*)$/is);
+  if (mCap) {
+    legenda = mCap[1].replace(/^["“”']+|["“”'.\s]+$/g, '');
+  }
+  // Acrescenta a legenda visível (h1), que traz o texto completo do post
   for (const s of ['h1', 'article h1', 'div[class*="Caption"] span']) {
     try {
       const els = await page.$$(s);
-      for (const el of els) texto += ' ' + (await el.textContent().catch(() => ''));
+      for (const el of els) legenda += ' ' + (await el.textContent().catch(() => ''));
     } catch {}
   }
-  try {
-    texto += ' ' + (await page.$$eval('img[alt]', imgs => imgs.map(i => i.alt))).join(' ');
-  } catch {}
+  const texto = legenda; // busca de keywords roda só sobre a legenda
 
   // Likes e comentários do og:description (funciona em pt e en)
   let likes = '', comentarios = '';
@@ -433,6 +480,8 @@ async function scrapePerfil(page, username) {
 const SESSION_FILE = 'C:\\scraper\\ig_session.json';
 
 (async () => {
+  await obterDatas();
+
   console.log('\n════════════════════════════════════════════');
   console.log(` INTERVALO: ${formatarData(DATA_INICIAL)}  até  ${formatarData(DATA_FINAL)}`);
   console.log(` Arquivo:   complementando ${CSV_PATH}`);
